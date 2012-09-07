@@ -72,3 +72,5 @@ However, if you've not encrypted your secret, none of this will not be necessary
 ### Other ###
 
 I, Trasp, would also like to thanks Mt.Gox for contributing to this application. And a special thanks goes to MagicalTux for his neverending support in #mtgox
+
+Also, like all other suckers out there I would also warmly welcome tiny donations, being a broke student and all :). If you think I deserved it, here's my address: 1NMmr9upNA37t91UkVagK2X5m55jvLMTWb
