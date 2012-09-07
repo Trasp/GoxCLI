@@ -2211,10 +2211,6 @@ class ShellHandler(ActionHandler):
         color = self.xml.colors.get(colorName, "\033[0;0m").decode("string_escape")
         color = color.decode("string_escape")
         reset = self.creset if reset else ""
-        if hasattr(text, "decode"):
-            text  = text.decode("utf-8")
-        else:
-            text  = str( text ).decode("utf-8")
         return u"{color}{text}{reset}".format(color = color,
                                               text  = text,
                                               reset = reset)
