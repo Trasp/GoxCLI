@@ -1571,11 +1571,12 @@ class ActionHandler(object):
                     # Take first device in config, but only if it's the only
                     n = 0
                     for d in self.xml.iterDevices():
-                        if n: break
-                        else: n += 1
+                        if n:
+                            break
+                        n += 1
                     else:
-                        print d.standard
-                        self.device = d
+                        if n:
+                            self.device = d
                     if not self.device:
                         self._standard = "USD"
                         return self._standard
@@ -2211,6 +2212,10 @@ class ShellHandler(ActionHandler):
         color = self.xml.colors.get(colorName, "\033[0;0m").decode("string_escape")
         color = color.decode("string_escape")
         reset = self.creset if reset else ""
+        #if hasattr(text, "decode"):
+        #    text  = text.decode("utf-8")
+        #else:
+        #    text  = str( text ).decode("utf-8")
         return u"{color}{text}{reset}".format(color = color,
                                               text  = text,
                                               reset = reset)
