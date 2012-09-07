@@ -71,6 +71,21 @@ However, if you've not encrypted your secret, none of this will not be necessary
 
 ### Other ###
 
+Here is the history I found on goxsh's website that Optonic wrote, which I feel is worth to include:
+
+* goxsh was originally written by ahihi and first announced on June 17, 2011 on the Bitcoin Forum.
+
+* On July 21, 2011 I decided to add some basic ANSI-color support to goxsh and therefor forked goxsh at github: Optonic/goxsh 0.11 was born. With goxsh 0.13 color settings were sourced out into a separate config file. With 0.16c the ability to login with API-key/secret was added to goxsh. The ability to login with 
+username and password has been removed in release 0.20 as it had become deprecated but new features were added.
+
+* On July 30, 2011 I announced my fork on the Bitcoin Forum. 
+
+My, Trasp, own notes about GoxCLI:
+
+This started out as a fork of goxsh. I was supposed to update it to Mt.Gox's API v1, enable the use of multiple currencies and trickiest of all, implement a new interface you could reach straight from command-line. I quickly realized it would become a real mess so I rewrote it pretty much from scratch but you will still see alot of the goxsh-style and code in goxcli so I suppose you could still call GoxCLI a fork of goxsh.
+
+-------------------------
+
 I, Trasp, would also like to thanks Mt.Gox for contributing to this application. And a special thanks goes to MagicalTux for his neverending support in #mtgox
 
 Also, like all other suckers out there I would also warmly welcome tiny donations, being a broke student and all :). If you think I deserved it, here's my address: 1NMmr9upNA37t91UkVagK2X5m55jvLMTWb
