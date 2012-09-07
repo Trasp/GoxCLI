@@ -82,7 +82,7 @@ username and password has been removed in release 0.20 as it had become deprecat
 
 My, Trasp, own notes about GoxCLI:
 
-This started out as a fork of goxsh. I was supposed to update it to Mt.Gox's API v1, enable the use of multiple currencies and trickiest of all, implement a new interface you could reach straight from command-line. I quickly realized it would become a real mess so I rewrote it pretty much from scratch but you will still see alot of the goxsh-style and code in goxcli so I suppose you could still call GoxCLI a fork of goxsh.
+This started out as a fork of goxsh. I was supposed to update it to Mt.Gox's API v1, enable the use of multiple currencies and implement a new interface which you could reach straight from command-line. After I realized it would become a real mess I rewrote it pretty much from scratch. Since you will still see alot of the goxsh-style and a little of the code in goxcli I suppose you still could call GoxCLI a fork of goxsh.
 
 -------------------------
 
