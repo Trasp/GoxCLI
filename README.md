@@ -68,3 +68,7 @@ If you're using encrypted method of saving your key, please note that to run act
 $ login daemon=True
 
 However, if you've not encrypted your secret, none of this will not be necessary and you can run whatever action you'd like without a service running.
+
+### Other ###
+
+I, Trasp, would also like to thanks Mt.Gox for contributing to this application. And a special thanks goes to MagicalTux for his neverending support in #mtgox
