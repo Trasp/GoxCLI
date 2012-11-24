@@ -1,17 +1,13 @@
 #!/usr/bin/env python
 import os,sys
-import random, uuid, time
+
 from datetime import datetime
-
-import string
+from functools import partial
 from decimal import Decimal,InvalidOperation
-
-import xml.dom.minidom
 from optparse import OptionParser,OptionGroup
 
 # Regular expression-support
 import re
-from functools import partial
 
 # HTTP, SSL and Pipes
 from ssl import SSLError
@@ -29,15 +25,18 @@ import hmac
 import hashlib
 
 # Json-Support
-# Slow json needed for prettyprint, will be replaced by regexps.
+# Slow json only needed for prettyprint, should add regexps instead.
 import json, cjson
 
-# Inputhandling
-import traceback
+import xml.dom.minidom
 import readline
+import random
+import uuid
 import getpass
+import string
+import traceback
 import locale
-
+import time
 
 
 class CredentialError(Exception): pass
@@ -151,13 +150,16 @@ class XmlParse(object):
             devices.appendChild(device.node)
         for pNode in self.cfg.getElementsByTagName("devices"):
             self.cfg.removeChild(pNode)
+            #self.cfg.replaceChild(devices,pNode)
+            #break
+        #else:
         self.cfg.insertBefore(devices, self.cfg.firstChild)
         self.write()
 
     @devices.deleter
     def devices(self,device):
         # Compare id with all devices in XML
-        for dNode in self.cfg.getElementsByTagName(device.id):
+        for dNode in self.cfg.getElementsByTagName(device.id): # "device"
             # Remove device on match
             dNode.parentNode.removeChild(dNode)
 
@@ -213,7 +215,7 @@ class XmlParse(object):
         return doc
 
     def read(self, path=None, colors=False, currencies=False):
-        u"Read config and set dictionaries with new settings."
+        u"Read config and (re)set dictionaries with new settings."
         if path: self.path = path
         self.doc = self.parse(self.path)
         cfg = self.doc.firstChild
@@ -223,6 +225,7 @@ class XmlParse(object):
             raise InputError("Error reading XML")
         for sNode in self.cfg.childNodes:
             if sNode.tagName == "settings":
+                #sNode = node
                 break
         if currencies:
             self.currencies = self._read_currencies(sNode)
@@ -279,7 +282,8 @@ class XmlParse(object):
             try:
                 prefix   = cNode.attributes["symbol"].value
                 decimals = int( cNode.attributes["decimals"].value )
-            except KeyError:
+            except IndexError:
+                # TODO: Was it really IndexError?
                 m = "%s: %s" % ("Malformed currency: ", currency.upper())
                 raise InputError("Invalid XML: %s" % m, kind = "XML", arg = m)
             else:
@@ -498,7 +502,7 @@ class ServiceReader:
         u"Read credentials from service"
         if socket.AF_UNIX:
             # Unix inter-communication socket, supposedly more secure
-            host = "/tmp/{0}".format(device.id)
+            host = "/tmp/{0}".format(device.id) # device.id
             s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         else:
             # Create a TCP socket (Fallback/windows)
@@ -590,7 +594,7 @@ class LoginDaemon(object):
                             )
             listening = 1
         else:
-            # TCP socket, fallback or windows-machines...
+            # TCP socket, windows-machines...
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             # Pick random port above 1024
             listening = random.randrange(1025,65555)
@@ -632,10 +636,10 @@ class LoginDaemon(object):
         else:
             # New process
             if not os.fork():
-                # Third and last process, our background service
-                # NOTE: Without the last fork the process dies when the user log
+                # Another fork, our background service
+                # NOTE: Without this last fork the process die if the user log
                 #       out or close the running shell.
-                sys.stdin  = open(os.devnull, 'r')
+                sys.stdin = open(os.devnull, 'r')
                 sys.stdout = open(os.devnull, 'w')
                 sys.stderr = open(os.devnull, 'w')
                 self._listen(*args)
@@ -653,11 +657,10 @@ class LoginDaemon(object):
                 # Credentials requested
                 self.parent._counter += 1
                 # Return json with credentials
-                reply = {
-                        "key"    : self.parent._key,
-                        "secret" : self.parent._secret,
-                        "counter": self.parent._counter
-                        }
+                reply = dict(key=self.parent._key,
+                            secret=self.parent._secret,
+                            counter=self.parent._counter
+                            )
                 connection.send(cjson.encode(reply))
             else:
                 # Other data recieved, killing service
@@ -906,7 +909,6 @@ class MtGoxAPI(object):
 
 class DepthParser(object):
     def __init__(self, currencyDecimals, args = []):
-        u"Parses OrderBook and generate new jsons"
         self._cPrec = Decimal(1) / 10 ** currencyDecimals
         self.__sides = ("asks","bids")
         try:
@@ -1207,6 +1209,7 @@ class DepthParser(object):
                             if side == "bids": orders = reversed(orders)
                 else:
                     # Flip back orderlist and resturn
+                    if not isinstance(orders, list): orders = list(orders)
                     if side == "bids": orders = reversed(orders)
             table[side] = list(orders)
         json = {
@@ -1764,12 +1767,16 @@ class ActionHandler(object):
         if price:
             price = Decimal(price)
             # Create order with specified price and amount
-            if not opts.asbtc:
-                # Convert amount to BTC
+            if opts.asbtc:
+                # "If user applied amount in BTC", convert amount to int
+                amount = amount / bPrec
+            else:
+                # Convert amount specified in currency (value) to BTC
                 amount = amount / price
-            # Convert amount and price to int
-            amount = amount / bPrec
-            price  = price / cPrec
+                # Convert amount to int
+                amount = amount / bPrec
+            # Convert price to int
+            price = price / cPrec
         else:
             # Generate order with a certain amount or value
             side   = "bids" if kind == "ask" else "asks"
@@ -1890,7 +1897,7 @@ class ActionHandler(object):
             if len(args) == 1 and args[0].lower() == "full=true":
                 full = True
             else:
-                # Process list with DepthParse-class
+                # Need to process list with DepthParse-class
                 decimals = self.xml.currency(currency)[0]
                 depth = DepthParser(decimals, args = args)                
                 json  = self.api.depth(
@@ -1992,11 +1999,16 @@ class ActionHandler(object):
         elif len(args) > 5:
             raise InputError("Expected 3,4 or 5 arguments, got %s" % len(args))
         currency = args.pop(0)
+        # Check if currency exists (InputError(msg,kind="XMLError",arg=currency))
         if currency.upper() != "BTC":
             try:
                 self.xml.currency(currency)
             except KeyError:
                 raise InputError("Invalid argument: %s", arg = currency)
+        #except InputError:
+        #if not self.api.precisions.has_key(currency.upper()):
+        #    raise InputError("Invalid currency: %s " % currency,
+        #                     kind="currency", arg=currency)
         account = None
         for arg in args:
             try:
@@ -2107,8 +2119,15 @@ class ActionHandler(object):
                 }
             json = {"result":"success", "return":json}
             return JsonParser.build(json)
+        
+    #def _action_add_wallet(self, opts, args):
+    #    u"Redeems your private key inside your wallet.dat"
+    #
+    #def _action_add_private(self, opts, args):
+    #    u"Redeem private key"
+    #
 
-
+        
 class OptObject(object):
     def __init__(self,
         opts     = None,
@@ -2194,6 +2213,10 @@ class ShellHandler(ActionHandler):
         color = self.xml.colors.get(colorName, "\033[0;0m").decode("string_escape")
         color = color.decode("string_escape")
         reset = self.creset if reset else ""
+        #if hasattr(text, "decode"):
+        #    text  = text.decode("utf-8")
+        #else:
+        #    text  = str( text ).decode("utf-8")
         return u"{color}{text}{reset}".format(color = color,
                                               text  = text,
                                               reset = reset)
@@ -2304,6 +2327,14 @@ class ShellHandler(ActionHandler):
                     currency = self.opts.currency
                     )
                 line = raw_input(out)
+                # TODO:
+                # Ansi escape-codes mess up raw_input, should find a way around it.
+                #sign = u" > " if self.dName else u"> "
+                #line = raw_input("\n{currency}{dName}{sign}".format(
+                #    currency = self.colorText(currency, "shell_currency"),
+                #    dName = self.colorText(self.dName or u'', "shell_user"),
+                #    sign = self.colorText(sign, "shell_self")
+                #    )) # [CRY] devname $
                 print ""
             except EOFError, e:
                 print self.colorText(u"exit","shell_self")
@@ -2690,18 +2721,18 @@ class ShellHandler(ActionHandler):
                 ))
         print self.colorText(header,"shell_self")
         print dLine
-            
-        lower = Decimal(json["return"]["gap"]["lower"])
-        lower = format(lower, pForm)
-        lower = lower.rjust(11)[:11]
-        print self.colorText(
-            u"   {type}  {sep} {lower}".format(
-                type  = "Gap",
-                sep   = sep,
-                lower = lower
-                ),
-            "shell_self"
-            )
+        if all((json["return"]["bids"],json["return"]["asks"])):
+            lower = Decimal(json["return"]["gap"]["lower"])
+            lower = format(lower, pForm)
+            lower = lower.rjust(11)[:11]
+            print self.colorText(
+                u"   {type}  {sep} {lower}".format(
+                    type  = "Gap",
+                    sep   = sep,
+                    lower = lower
+                    ),
+                "shell_self"
+                )
         for side in ("asks","gap","bids"):
             color = "depth_{0}".format(side)
             type  = side.capitalize()[:3]
@@ -2761,19 +2792,6 @@ class ShellHandler(ActionHandler):
                        value = str()
                     order = u"   {0}  {sep} {1} {sep} {2}  {3}"
                     print order.format(type, price, amount, value, sep = sep)
-        if not json["return"]["bids"]:
-            lower = Decimal(json["return"]["gap"]["lower"])
-            lower = format(lower, pForm)
-            lower = lower.rjust(11)[:11]
-            lower = self.colorText(lower, "shell_self")
-            print self.colorText(
-                u"   {type}  {sep} {lower}".format(
-                    type  = "Low",
-                    sep   = sep,
-                    lower = lower
-                    ),
-                "shell_self"
-                )
 
     def _shell_exit(self,opts=None,args=None):
         u"Exit GoxCLI.\n" \
