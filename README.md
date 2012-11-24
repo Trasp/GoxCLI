@@ -24,6 +24,7 @@ And of course, more...
 
 * Python 2.6 or a newer 2.* release.
 * PyCrypto 2.0.1 or later.
+* Python cjson
 
 ### Instructions ###
 
