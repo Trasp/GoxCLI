@@ -90,3 +90,5 @@ This started out as a fork of goxsh. I was supposed to update it to Mt.Gox's API
 I, Trasp, would also like to thanks Mt.Gox for contributing to this application. And a special thanks goes to MagicalTux for his neverending support in #mtgox
 
 Also, like all other suckers out there I would also warmly welcome tiny donations, being a broke student and all :). If you think I deserved it, here's my address: 1NMmr9upNA37t91UkVagK2X5m55jvLMTWb
+
+You can also find me in #1024 at FreeNode if you want to contact me.
