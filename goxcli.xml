@@ -1,0 +1,95 @@
+<?xml version="1.0" ?>
+<GoxCLI>
+    <devices>
+    </devices>
+    <settings>
+        <currencies>
+            <BTC decimals="8" symbol="BTC"/>
+            <USD decimals="5" symbol="$"/>
+            <EUR decimals="5" symbol="€"/>
+            <JPY decimals="3" symbol="¥"/>
+            <CAD decimals="5" symbol="$"/>
+            <GBP decimals="5" symbol="£"/>
+            <CHF decimals="5" symbol="CHF"/>
+            <RUB decimals="5" symbol="RUB"/>
+            <AUD decimals="5" symbol="$"/>
+            <SEK decimals="3" symbol="kr"/>
+            <DKK decimals="5" symbol="kr"/>
+            <HKD decimals="5" symbol="$"/>
+            <PLN decimals="5" symbol="zł"/>
+            <CNY decimals="5" symbol="元"/>
+            <SGD decimals="5" symbol="$"/>
+            <THB decimals="5" symbol="฿"/>
+            <NZD decimals="5" symbol="$"/>
+            <NOK decimals="5" symbol="kr"/>
+        </currencies>
+        <daemon handshakes="True" port="0" websocket="False">
+            <depth path="./depth.data" value="True"/>
+            <trades path="./trades.data" value="3600"/>
+            <output outgoing="True" value="False">
+                <depth path="./depth.log" value="True"/>
+                <trades path="./trades.log" value="True"/>
+                <tickers path="./tickers.log" value="True"/>
+                <devices path="./private/%s.log" value="True"/>
+            </output>
+        </daemon>
+        <shell>
+            <colors>
+                <ticker_high value="green"/>
+                <ticker_buy value="green_strong"/>
+                <ticker_last value="yellow_strong"/>
+                <ticker_avg value="yellow_strong"/>
+                <ticker_vol value="yellow"/>
+                <ticker_sell value="red_strong"/>
+                <ticker_low value="red"/>
+                <depth_bids value="green_strong"/>
+                <depth_asks value="red_strong"/>
+                <depth_gap value="yellow_strong"/>
+                <depth_no value="yellow_strong"/>
+                <trades_up value="green_strong"/>
+                <trades_down value="red_strong"/>
+                <trades_con value="yellow_strong"/>
+                <history_earn value="green_strong"/>
+                <history_spend value="red_strong"/>
+                <history_fee value="red"/>
+                <history_balance value="yellow_strong"/>
+                <shell_user value="cyan"/>
+                <shell_device value="cyan_strong"/>
+                <shell_self value="default"/>
+                <shell_currency value="blue"/>
+                <shell_help_cmd value="cyan_strong"/>
+                <shell_help_arg value="cyan"/>
+                <shell_help_descr value="white_strong"/>
+                <shell_help_arg_descr value="white"/>
+                <order_amount value="white_strong"/>
+                <order_price value="white_strong"/>
+                <order_ask value="red_strong"/>
+                <order_bid value="green_strong"/>
+                <error_message value="red_strong"/>
+                <error_arg value="white_strong"/>
+                <separators value="white"/>
+                <login_prompt value="magenta_strong"/>
+            </colors>
+            <ansi>
+                <grey value="\033[0;30m"/>
+                <grey_strong value="\033[1;30m"/>
+                <red value="\033[0;31m"/>
+                <red_strong value="\033[1;31m"/>
+                <green value="\033[0;32m"/>
+                <green_strong value="\033[1;32m"/>
+                <yellow value="\033[0;33m"/>
+                <yellow_strong value="\033[1;33m"/>
+                <blue value="\033[0;34m"/>
+                <blue_strong value="\033[1;34m"/>
+                <magenta value="\033[0;35m"/>
+                <magenta_strong value="\033[1;35m"/>
+                <cyan value="\033[0;36m"/>
+                <cyan_strong value="\033[1;36m"/>
+                <white value="\033[0;37m"/>
+                <white_strong value="\033[1;37m"/>
+                <default value="\033[0;0m"/>
+                <reset value="\033[0;0m"/>
+            </ansi>
+        </shell>
+    </settings>
+</GoxCLI>
