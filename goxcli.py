@@ -560,7 +560,7 @@ class LoginDaemon(object):
                 if data != "":
                     raise DaemonError(u"Malformed reply.")
                 else:
-                    return r'{"return": "Terminated.", "result": "success"}'
+                    return r'{"data": "Terminated.", "result": "success"}'
 
     def run(self,daemon=False):
         u"Start daemon threads and listen on socket"
@@ -695,18 +695,91 @@ class MtGoxAPI(object):
             self._credentials = args
         else:
             raise ValueError("credentials expected 2 items, got %s" % len(args))
-
+    
+    def __request_format_auth(self, path, params, api):
+        """ Format a POST-request according to the rules set by Mt.Gox. """
+        # Format URL
+        url = "".join((self._url, str(api), "/", path))
+        # Function requires authentication
+        key, secret, counter = self.credentials
+        # Timestamp*1000+counter to make no more than 1000 requests per second possible
+        params["nonce"] = int(time.time()*1000)+counter
+        # Format the POST-data
+        data = urllib.urlencode(params)
+        try:
+            # Decode secret
+            secret = base64.b64decode(secret)
+            # Hmac-sha512-hash secret, postdata and also path since v2
+            if api < 2:
+                hash = hmac.new(secret, data, hashlib.sha512)
+            else:
+                hash = hmac.new(secret, path + chr(0) + data, hashlib.sha512)
+            # Digest hash as binary and encode with base64
+            sign = base64.b64encode(hash.digest())
+        except TypeError:
+            # Catch exception thrown due to bad key or secret
+            raise CredentialError(
+                u"Could not sign request due to bad secret or wrong" + \
+                u" password. Please try again or request new " + \
+                u" credentials by reactivating your application."
+                )
+        else:
+            # Apply the base64-encoded data together with api-key to header
+            headers = {
+                    "User-Agent":"GoxCLI",
+                    "Rest-Key":key,
+                    "Rest-Sign":sign
+                    }
+            req = urllib2.Request(url, data, headers)
+        return url, req, data
+    
+    def __request_format_public(self, path, params, api):
+        """ Format a simple GET-request instead of POST. """
+        url  = "".join((self._url, str(api), "/", path))
+        data = urllib.urlencode(params) if len(params) > 0 else None
+        req  = urllib2.Request(url, data)
+        return url, req, data
+        
+    def _request(self, path, api=2, params={}, currency=None, crypto="BTC", auth=True):
+        if api > 1:
+            # API v2 require paths like money/info or BTCUSD/money/order/add
+            path = "".join(("money/", path))
+        if api > 0:
+            if currency:
+                # Some functions in API v1 and later require currency-pairs like BTCUSD
+                path = "".join((crypto,currency,"/",path))
+            elif api == 1:
+                # Other functions in v1 is preceded by the "generic" domain
+                path = "".join(("generic/", path))
+        if auth:
+            # Instanciate a request using POST including sign for authentication
+            url, req, data = self.__request_format_auth(path, params, api)
+        else:
+            # Instanciate a request using GET
+            url, req, data = self.__request_format_public(path, params, api)
+        timeout = 15
+        try:
+            with closing(urllib2.urlopen(req, data, timeout)) as response:
+                return response.read()
+        except SSLError, e:
+            raise MtGoxError("Could not reach Mt.Gox. Operation timed out.")
+        except urllib2.HTTPError, e:
+            if e.code == 403:
+                raise MtGoxError("Authorization to this API denied")
+            else:
+                raise urllib2.HTTPError(e.url, e.code, e.msg, None, None)
+    
     def activate(self,actkey,dName,pw=None):
         u"Activate application and add device to config. You will need at" \
         u" least some rights to use most of the functions in this application."
-        rel_path = "activate.php"
+        rel_path = "api/activate"
         appkey = "52915cb8-4d97-4115-a43a-393c407143ae"
         params = {
                 u"name": dName,
                 u"key": actkey,
                 u"app": appkey
                 }
-        return self._request(rel_path, api=0, params=params, auth=False)
+        return self._request(rel_path, params=params, auth=False)
 
     def add_order(self, kind, amount, price, currency):
         rel_path = "order/add"
@@ -734,27 +807,24 @@ class MtGoxAPI(object):
         rel_path = "bitcoin/addr_details"
         params = {"hash":hash}
         return self._request(rel_path, params=params, auth=False)
-
-    def cancel(self, type, oid):
+    
+    def cancel(self, oid):
         u"Cancel order identified with type and oid"
-        rel_path = "cancelOrder.php"
-        params = {
-                "type":{"ask":1,"bid":2}[type],
-                "oid":oid
-                }
-        return self._request(rel_path, api=0, params=params, auth=True)
+        rel_path = "order/cancel"
+        params = { "oid":oid }
+        return self._request(rel_path, params=params, auth=True)
         
     def deposit(self):
         u"Requests address for depositing BTC to your wallet at Mt.Gox."
         rel_path = "bitcoin/address"
         return self._request(rel_path, auth=True)
         
-    def depth(self,currency=None,full=False):
+    def depth(self, currency=None,full=False):
         u"Request current depth-table at Mt.Gox (aka order book)."
         if full:
-            rel_path = "fulldepth"
+            rel_path = "depth/full"
         else:
-            rel_path = "depth"
+            rel_path = "depth/fetch"
         return self._request(rel_path, currency = currency, auth = False)
 
     def history(self, currency, page = 1):
@@ -800,111 +870,21 @@ class MtGoxAPI(object):
         p = {"since":since} if since else {}
         return self._request(rel_path, currency=currency, params=p, auth=False)
 
-    def transaction(self,hash):
+    def transaction(self, hash):
         u"Request information about a transaction within the BTC blockchain."
         rel_path = "bitcoin/tx_details"
-        params = {"hash":hash}
+        params   = {"hash":hash}
         return self._request(rel_path, params=params, auth=False)
-
-    def withdraw(self, currency, destination, amount, account, green = False):
-        u"Withdraw BTC or Dollars."
-        rel_path = "withdraw.php"
-        g = {False:"0",True:"1"}[green]
-        destination = destination.lower()
-        if destination == "coupon":
-            if currency in ("BTC","USD"):
-                params = {
-                    u"group1": "".join((currency,"2CODE")),
-                    u"amount": amount
-                }
-            else:
-                params = {
-                    u"group1": u"USD2CODE",
-                    u"amount": amount,
-                    u"Currency": currency
-                    }
-        elif (currency == "BTC") and (destination == "btc"):
-            params = {
-                u"group1": u"BTC",
-                u"btca": account,
-                u"amount": amount,
-                u"green": g
-            }
-        elif (currency == "USD") and (destination == "dwolla"):
-            params = {
-                u"group1": u"DWUSD",
-                u"dwaccount": account,
-                u"amount": amount,
-                u"green": g
-            }
-        elif (currency == "USD") and (destination == "lr"):
-            params = {
-                u"group1": u"USD",
-                u"account": account,
-                u"amount": amount,
-                u"green": g
-            }
-        elif (currency == "USD") and (destination == "paxum"):
-            params = {
-                u"group1": u"PAXUMUSD",
-                u"paxumaccount": account,
-                u"amount": amount,
-                u"green": g
-            }
-        else:
-            raise InputError("Impossible combination of arguments and/or currency.")
-        return self._request(rel_path, api = 0, params=params, auth=True)
-            
-    def _request(self, rel_path, api = 1, params = {}, currency = None, auth = True):
-        if api and currency:
-            url = "".join((self._url, "1/", "".join(("BTC",currency,"/")), rel_path))
-        elif api:
-            url = "".join((self._url, "1/generic/", rel_path))
-        else:
-            url = "".join((self._url, "0/", rel_path))
-        timeout = 15
-        if auth:
-            # Function requires authentication
-            key,secret,counter = self.credentials
-            # Timestamp*1000+counter to make no more than 1000 requests per second possible
-            params["nonce"] = (int(time.time())*1000)+counter
-            # Format the post_data, if not null
-            post_data = urllib.urlencode(params) if len(params) > 0 else None
-            try:
-                # Decode secret
-                secret = base64.b64decode(secret)
-                # Hmac-sha512-hash secret and postdata
-                hash = hmac.new(secret, post_data, hashlib.sha512)
-                # Digest hash as binary and encode with base64
-                sign = base64.b64encode(str(hash.digest()))
-            except TypeError:
-                # Catch exception thrown due to bad key or secret
-                raise CredentialError(
-                    u"Could not sign request due to bad secret or wrong" + \
-                    u" password. Please try again or request new " + \
-                    u" credentials by reactivating your application."
-                    )
-            else:
-                # Apply the base64-encoded data together with api-key to header
-                headers = {
-                        "User-Agent":"GoxCLI",
-                        "Rest-Key":key,
-                        "Rest-Sign":sign
-                        }
-                req = urllib2.Request(url, post_data, headers)
-        else:
-            post_data = urllib.urlencode(params) if len(params) > 0 else None
-            req = urllib2.Request(url, post_data)
-        try:
-            with closing(urllib2.urlopen(req, post_data, timeout)) as response:
-                return response.read()
-        except SSLError, e:
-            raise MtGoxError("Could not reach Mt.Gox. Operation timed out.")
-        except urllib2.HTTPError, e:
-            if e.code == 403:
-                raise MtGoxError("Authorization to this API denied")
-            else:
-                raise urllib2.HTTPError(e.url, e.code, e.msg, None, None)
+    
+    def withdraw(self, destination, amount, fee=Decimal("0.0")):
+        u"Withdraw crypto."
+        cryptoPrec = Decimal("0.00000001")
+        amount_int = int(amount / cryptoPrec)
+        fee        = int(fee    / cryptoPrec)
+        rel_path   = "bitcoin/send_simple"
+        params     = {"address": destination, "amount_int": amount_int }
+        if fee: params["fee_int"] = fee
+        return self._request(rel_path, params=params, auth=True)
 
 
 class DepthParser(object):
@@ -1039,7 +1019,7 @@ class DepthParser(object):
         except AttributeError:
             return False
 
-    @iv.setter
+    @full.setter
     def full(self, value):
         self._full = self.readBool(value)
 
@@ -1070,7 +1050,7 @@ class DepthParser(object):
     def process(self, json, raw = True):
         u"Parse depth-table from Mt.Gox, returning orders matching arguments"
         # Check if user has applied any arguments so we need to parse and strip the json
-        json      = JsonParser.parse(json)["return"]
+        json      = JsonParser.parse(json)["data"]
         steps     = self.steps
         oMinPrice = self.low
         oMaxPrice = self.high
@@ -1213,7 +1193,7 @@ class DepthParser(object):
                     if side == "bids": orders = reversed(orders)
             table[side] = list(orders)
         json = {
-                "return":table,
+                "data":table,
                 "result":"success"
                 }
         return JsonParser.build(json) if raw else json
@@ -1550,7 +1530,7 @@ class ActionHandler(object):
             self._secret   = None
             self._counter  = 0
         else:
-            self.user   = json["return"]["Login"]
+            self.user   = json["data"]["Login"]
 
     @property
     def dName(self):
@@ -1644,9 +1624,10 @@ class ActionHandler(object):
         # Call API
         json = self.api.activate(args[0], dName)
         # Parse data
-        json   = JsonParser.parse(json)
-        key    = json[u"Rest-Key"].decode('string_escape')
-        self._secret = json[u"Secret"].decode('string_escape')
+        json = JsonParser.parse(json)
+        data = json["data"]
+        key  = data[u"Rest-Key"].decode('string_escape')
+        self._secret = data[u"Secret"].decode('string_escape')
         if pw:
             # Encrypt secret
             length = len(self._secret)
@@ -1671,13 +1652,13 @@ class ActionHandler(object):
             length = 0
         rights = dict()
         for dkey in ("get_info","trade","deposit","withdraw","merchant"):
-            rights[dkey] = True if json[u"Rights"].get(key,False) else False
+            rights[dkey] = True if data[u"Rights"].get(key,False) else False
         # Save values to config
         device = DeviceItem(dName, key, secret, encrypted=length)
         id     = device.id
         self.xml.addDevice(device)
         json = {
-                "return":{"name":dName,"id":id,"rights":rights},
+                "data":{"name":dName,"id":id,"rights":rights},
                 "result":"success"
                 }
         return JsonParser.build(json)
@@ -1790,7 +1771,7 @@ class ActionHandler(object):
                 depth.steps  = 1
                 depth.amount = amount
                 json         = depth.process(json, raw = False)
-                price        = int(json["return"][side][0]["price_int"])
+                price        = int(json["data"][side][0]["price_int"])
             else:
                 # Amount given in currency-value.
                 depth.value = amount
@@ -1799,7 +1780,7 @@ class ActionHandler(object):
                 total = amount / cPrec
                 total = total  / bPrec
                 # Get price and amount
-                orders  = depth.process(json, raw = False)["return"][side]
+                orders  = depth.process(json, raw = False)["data"][side]
                 current = 0
                 amount  = 0
                 order   = orders.pop(0)
@@ -1815,7 +1796,8 @@ class ActionHandler(object):
                     amount = current + ( rest / price )
         amount, price = str(amount), str(price)
         return self.api.add_order(kind, amount, price, currency)
-
+    
+    """
     def _action_cancel(self, opts, args):
         u"cancel <type> <oid>\n" \
         u"<type> Order type, could be either ask or bid.\n" \
@@ -1827,6 +1809,14 @@ class ActionHandler(object):
                 raise InputError("Invalid argument: %s" % args[0], arg=args[0])
             else:
                 return self.api.cancel(args[0],args[1])
+    """
+    def _action_cancel(self, opts, args):
+        u"cancel <oid>\n" \
+        u"<oid> OrderID of the order."
+        if len(args) != 1:
+            raise InputError("Expected 1 argument, got %s" % len(args))
+        else:
+            return self.api.cancel(args[0])
 
     def _action_delete(self, opts, args):
         u"Delete device saved in config.\n" \
@@ -1842,7 +1832,7 @@ class ActionHandler(object):
         else:
             self.xml.write()
             json = { "result": "success",
-                     "return": returns }
+                     "data": returns }
         return JsonParser.build(json)
 
     def _action_devices(self, opts, args):
@@ -1860,7 +1850,7 @@ class ActionHandler(object):
         else:
             self.xml.write()
             json = { "result": "success",
-                     "return": returns }
+                     "data": returns }
         return JsonParser.build(json)
 
     def _action_deposit(self, opts, args):
@@ -1983,64 +1973,33 @@ class ActionHandler(object):
             return self.api.transaction(args[0])
         else:
             raise InputError("Expected 1 argument, got %s" % len(args))
-        
+    
     def _action_withdraw(self, opts, args):
-        u"withdraw <currency> <destination=str> <amount=dec> <account=str>\n" \
-        u"<currency> Currency as three letter code or BTC (Currently only \n" \
-        u" coupons works with other currencies than BTC and USD).\n" \
-        u"<destination=str> Method of withdrawal, can be any of BTC, coupon" \
-        u" Dwolla, LR (Liberty Reserve) and Paxum.\n" \
-        u"<amount=dec> Amount to withdraw\n" \
-        u"<account=str> Your BTC-address, Dwolla-account, LR-account or" \
-        u" Paxum-account\n" \
-        u"<green=bool> Use the \"green address\"-feature."
-        if len(args) < 3:
-            raise InputError("Expected 3,4 or 5 arguments, got %s" % len(args))
-        elif len(args) > 5:
-            raise InputError("Expected 3,4 or 5 arguments, got %s" % len(args))
-        currency = args.pop(0)
-        # Check if currency exists (InputError(msg,kind="XMLError",arg=currency))
-        if currency.upper() != "BTC":
+        u"withdraw <destination> <amount> <fee=dec>\n" \
+        u"<destination> Destination address.\n" \
+        u"<amount> Amount to withdraw.\n" \
+        u"<fee=dec> Amount to pay out in fees (Max 0.1).\n"
+        if len(args) < 2:
+            raise InputError("Expected 2 or 3 arguments, got %s" % len(args))
+        destination, amount = args.pop(0), args.pop(0)
+        try:
+            amount = Decimal( amount )
+        except InvalidOperation:
+            raise InputError("Invalid argument: '%s'" % amount )
+        if args:
             try:
-                self.xml.currency(currency)
-            except KeyError:
-                raise InputError("Invalid argument: %s", arg = currency)
-        #except InputError:
-        #if not self.api.precisions.has_key(currency.upper()):
-        #    raise InputError("Invalid currency: %s " % currency,
-        #                     kind="currency", arg=currency)
-        account = None
-        for arg in args:
-            try:
-                k,v = arg.split("=")
-                k = k.lower()
+                k,v = args[0].split("=")
             except ValueError:
                 raise InputError("Invalid argument: " + arg, arg=arg)
             else:
-                if k == "destination":
-                    if v.lower() in ("btc","dwolla","lr","paxum", "coupon"):
-                        destination = v
-                elif k == "amount":
-                    amount = Decimal(v)
-                elif k == "account":
-                    account = str(v)
-                elif k == "green":
-                    if v.lower() in ("true","false"):
-                        green = True if v.lower() == "true" else False
-                    else:
-                        raise InputError("Invalid value: %s" % v,
-                                         kind="value", arg=v)
+                if k.lower() == "fee":
+                    fee = Decimal(v)
                 else:
                     raise InputError("Invalid argument: %s" % k, arg=k)
-        try:
-            if destination != "coupon" and account == None:
-                raise UnboundLocalError
-            args = (currency.upper(), destination, amount, account)
-            json = self.api.withdraw(*args)
-        except UnboundLocalError:
-            raise InputError("Missing argument.")
-        return json
-
+        else:
+            fee = Decimal("0.0")
+        return self.api.withdraw(destination, amount, fee)
+    
     def login(self):
         devices = self.xml.devices
         if self.opts.id:
@@ -2095,7 +2054,7 @@ class ActionHandler(object):
                     else:
                         device.listening = 0
                         self.xml.addDevice(device)
-            return JsonParser.build({"result":result, "return":returns})
+            return JsonParser.build({"result":result, "data":returns})
 
     def runService(self,daemon=False):
         self.set_credentials(*self.login())
@@ -2108,7 +2067,7 @@ class ActionHandler(object):
             raise CredentialError(u"Could not log in. Please reactivate " + \
                                   u"your application.")
         else:
-            acc = json["return"]["Login"]
+            acc = json["data"]["Login"]
             listening = LoginDaemon(self).run(daemon=daemon)
             self.device.listening = listening
             self.xml.addDevice(self.device)
@@ -2117,7 +2076,7 @@ class ActionHandler(object):
                 "id":      self.device.id,
                 "name":    self.device.name
                 }
-            json = {"result":"success", "return":json}
+            json = {"result":"success", "data":json}
             return JsonParser.build(json)
         
     #def _action_add_wallet(self, opts, args):
@@ -2126,7 +2085,6 @@ class ActionHandler(object):
     #def _action_add_private(self, opts, args):
     #    u"Redeem private key"
     #
-
         
 class OptObject(object):
     def __init__(self,
@@ -2213,10 +2171,6 @@ class ShellHandler(ActionHandler):
         color = self.xml.colors.get(colorName, "\033[0;0m").decode("string_escape")
         color = color.decode("string_escape")
         reset = self.creset if reset else ""
-        #if hasattr(text, "decode"):
-        #    text  = text.decode("utf-8")
-        #else:
-        #    text  = str( text ).decode("utf-8")
         return u"{color}{text}{reset}".format(color = color,
                                               text  = text,
                                               reset = reset)
@@ -2294,7 +2248,7 @@ class ShellHandler(ActionHandler):
                     e = "\nMt.Gox rejected credentials"
                     print self.colorText(e, "shell_self")
                 else:
-                    self.user   = json["return"]["Login"]
+                    self.user   = json["data"]["Login"]
                     self.device = device
                     self.opts.currency = device.standard
                     print "\n{0}{1}".format(
@@ -2539,22 +2493,22 @@ class ShellHandler(ActionHandler):
     def _shell_read_delete(self, json):
         u"Print successfully deleted devices."
         json = JsonParser.parse(json)
-        if not json["return"]:
+        if not json["data"]:
             print self.colorText("Found no device(s) to delete","error_message")
         else:
             print self.colorText(" Deleted ID(s): ", "shell_self")
-            for id in json["return"]: print self.colorText("  " + id, "shell_self")
+            for id in json["data"]: print self.colorText("  " + id, "shell_self")
 
     def _shell_read_devices(self, json):
         u"Print devices in config."
         sep   = self.colorText("|", "separators")
-        line  = self.colorText(("-"*78).center(60), "separators")
-        dLine = self.colorText(("="*78).center(60), "separators")
+        line  = " " + self.colorText(("-"*78).center(60), "separators")
+        dLine = " " + self.colorText(("="*78).center(60), "separators")
         item  = u" {name} {cry} {sep} {id} {sep} {enc} {sep} {listen}\n{line}"
         print self.colorText(
             item.format(
                 name   = "Name".ljust(20),
-                cry    = "".ljust(3),
+                cry    = "CRY".ljust(3),
                 id     = "ID".ljust(33),
                 listen = "Daemon",
                 enc    = "Encr",
@@ -2563,18 +2517,18 @@ class ShellHandler(ActionHandler):
                 ),
                 "shell_self"
             )
-        for device in JsonParser.parse(json)["return"]:
+        for device in JsonParser.parse(json)["data"]:
             listening  = "True" if device["listening"] == "True" else ""
             encrypted  = "True" if device["encrypted"] == "True" else ""
             print self.colorText(
                 item.format(
-                    standard  = device["standard"],
-                    name      = device["name"].ljust(20)[:20],
-                    id        = device["id"],
-                    listening = listening.ljust(4),
-                    encrypted = encrypted.ljust(4),
-                    sep       = sep,
-                    line      = line
+                    cry    = device["standard"],
+                    name   = device["name"].ljust(20)[:20],
+                    id     = device["id"],
+                    listen = listening.ljust(4),
+                    enc    = encrypted.ljust(4),
+                    sep    = sep,
+                    line   = line
                     ),
                 "shell_self"
                 )
@@ -2583,25 +2537,8 @@ class ShellHandler(ActionHandler):
         u"Set credentials after activating."
         json = JsonParser.parse(json)
         self.xml.read()
-        device = self.xml.getDevice(json["return"]["id"])
+        device = self.xml.getDevice(json["data"]["id"])
         self.set_credentials(device, self._secret)
-        
-    def _shell_buy(self, opts, args):
-        u"Post bid-order at Mt.Gox, buying bitcoins."
-        if len(args):
-            match = self.re_sign[opts.currency].match(args[0].decode("utf-8"))
-            if match:
-                print "match"
-                if match.group(2):
-                    args[0] = match.group(2)
-                else:
-                    args[0] = match.group(1)
-                opts.asbtc = False
-            else:
-                print "nomatch"
-                opts.asbtc = True
-        json = JsonParser.parse(self._action_buy(opts,args))
-        self._shell_read_buy(json)
         
     def _shell_kill(self, opts, args):
         u"Kill background-service providing credentials to other instances" \
@@ -2638,11 +2575,26 @@ class ShellHandler(ActionHandler):
         else:
             text   = "Stopped service: %s (%s)" % (device.id, device.name)
             print self.colorText(text, "shell_self")
+        
+    def _shell_buy(self, opts, args):
+        u"Post bid-order at Mt.Gox, buying bitcoins."
+        if len(args):
+            match = self.re_sign[opts.currency].match(args[0].decode("utf-8"))
+            if match:
+                if match.group(2):
+                    args[0] = match.group(2)
+                else:
+                    args[0] = match.group(1)
+                opts.asbtc = False
+            else:
+                opts.asbtc = True
+        json = JsonParser.parse(self._action_buy(opts,args))
+        self._shell_read_buy(json)
 
     def _shell_read_buy(self, json):
         u"Reads parsed json _shell_buy."
         text = self.colorText("Added bid: ","shell_self")
-        oid = self.colorText(json["return"], "order_bid")
+        oid = self.colorText(json["data"], "order_bid")
         print u"{0}{1}".format(text,oid)
 
     def _shell_sell(self, opts, args):
@@ -2666,12 +2618,26 @@ class ShellHandler(ActionHandler):
         u"Reads parsed json _shell_sell."
         print u"{0}{1}".format(
             self.colorText("Added ask: ","shell_self"),
-            self.colorText(json["return"], "order_ask")
+            self.colorText(json["data"], "order_ask")
             )
+
+    def _shell_cancel_all(self, opts, args):
+        u"Cancel all trades in orderlist.\n"\
+        u"cancel_all\n"
+        json = self._action_orders(opts, args)
+        json = JsonParser.parse(json)
+        for order in json[u"data"]:
+            oid   = order[u"oid"]
+            cJson = self._action_cancel(opts, [oid])
+            self._shell_read_cancel(cJson)
 
     def _shell_read_cancel(self, json):
         u"Cancel trade from type and oid."
-        self._shell_read_orders(json, old = True)
+        json = JsonParser.parse(json)
+        print u"{0}{1}".format(
+            self.colorText("Cancelled order: ","shell_self"),
+            self.colorText(json["data"]["oid"], "shell_self")
+            )
 
     def _shell_currency(self, opts, args):
         u"Change active currency.\n"\
@@ -2692,7 +2658,7 @@ class ShellHandler(ActionHandler):
     def _shell_read_deposit(self, json):
         u"Requests address for depositing BTC to your wallet at Mt.Gox."
         json = JsonParser.parse(json)
-        addr = u"Address: {0}".format(json["return"]["addr"])
+        addr = u"Address: {0}".format(json["data"]["addr"])
         print self.colorText(addr,"shell_self")
 
     def _shell_read_depth(self, json):
@@ -2702,10 +2668,10 @@ class ShellHandler(ActionHandler):
         sep   = self.colorText("|", "separators")
         line  = self.colorText(("-"*78).center(80), "separators")
         dLine = self.colorText(("="*78).center(80), "separators")
-        if json["return"]["bids"]:
-            ex = json["return"]["bids"][0]
-        elif json["return"]["asks"]:
-            ex = json["return"]["asks"][0]
+        if json["data"]["bids"]:
+            ex = json["data"]["bids"][0]
+        elif json["data"]["asks"]:
+            ex = json["data"]["asks"][0]
         else:
             print self.colorText(u"Table is empty.","shell_self")
             return
@@ -2721,8 +2687,8 @@ class ShellHandler(ActionHandler):
                 ))
         print self.colorText(header,"shell_self")
         print dLine
-        if all((json["return"]["bids"],json["return"]["asks"])):
-            lower = Decimal(json["return"]["gap"]["lower"])
+        if all((json["data"]["bids"],json["data"]["asks"],json.has_key("gap"))):
+            lower = Decimal(json["data"]["gap"]["lower"])
             lower = format(lower, pForm)
             lower = lower.rjust(11)[:11]
             print self.colorText(
@@ -2738,11 +2704,11 @@ class ShellHandler(ActionHandler):
             type  = side.capitalize()[:3]
             type  = self.colorText(type, "shell_self")
             if side == "gap":
-                if all((json["return"]["bids"],json["return"]["asks"])):
+                if all((json["data"]["bids"],json["data"]["asks"])):
                     # Both asks and bids is shown, printing info about the gap
                     try:
-                        upper = format(json["return"]["gap"]["upper"], pForm)
-                        lower = format(json["return"]["gap"]["lower"], pForm)
+                        upper = format(json["data"]["gap"]["upper"], pForm)
+                        lower = format(json["data"]["gap"]["lower"], pForm)
                         price = str(Decimal(upper) - Decimal(lower))
                     except KeyError:
                         print self.colorText(line, "separators")
@@ -2775,7 +2741,7 @@ class ShellHandler(ActionHandler):
                                 )
                         print self.colorText(line, "separators")
             else:
-                orders = reversed(json["return"][side])
+                orders = reversed(json["data"][side])
                 for o in orders:
                     price  = format(o["price"],    pForm)
                     price  = price.rjust(11)[:11]
@@ -2929,8 +2895,8 @@ class ShellHandler(ActionHandler):
         page   = 1
         while page:
             json = JsonParser.parse(self._action_history(opt, [str(page)]))
-            trades.extend(json["return"]["result"])
-            if page < int(json["return"]["max_page"]) and fh:
+            trades.extend(json["data"]["result"])
+            if page < int(json["data"]["max_page"]) and fh:
                 page += 1
             else:
                 page = False
@@ -2982,14 +2948,14 @@ class ShellHandler(ActionHandler):
         u"Read and print parsed json from info-action conatining info about" \
         u" your account at Mt.Gox."
         json  = JsonParser.parse(json)
-        user  = json["return"]["Login"]
+        user  = json["data"]["Login"]
         sep   = self.colorText("|", "separators")
         line  = self.colorText(("-"*78).center(80), "separators")
         dLine = self.colorText(("="*78).center(80), "separators")
-        if "get_info" in json["return"]["Rights"]:
-            vol = json["return"]["Monthly_Volume"]["value"]
+        if "get_info" in json["data"]["Rights"]:
+            vol = json["data"]["Monthly_Volume"]["value"]
             vol = u"30d Volume : {0}".format(vol)
-            fee = u"Fee : {0}%".format(json["return"]["Trade_Fee"])
+            fee = u"Fee : {0}%".format(json["data"]["Trade_Fee"])
             s = u"    User : {user} {sep} {vol} {sep} {fee}"
             print self.colorText(
                     s.format(
@@ -3012,7 +2978,7 @@ class ShellHandler(ActionHandler):
                     ), "shell_self"
                 )
             print line
-            wallets = json[u"return"][u"Wallets"]
+            wallets = json[u"data"][u"Wallets"]
             for currency,data in wallets.iteritems():
                 ops     = str(data[u"Operations"])
                 balance = data[u"Balance"][u"value"]
@@ -3039,11 +3005,18 @@ class ShellHandler(ActionHandler):
                     (u"Deposit", u"deposit" ),
                     (u"Withdraw",u"withdraw"),
                     (u"Merchant",u"merchant")):
-            if r in json[u"return"][u"Rights"]:
+            if r in json[u"data"][u"Rights"]:
                 rs += "".join(("  ", s," [X]"))
             else:
                 rs += "".join(("  ", s," [ ]"))
         print self.colorText(rs,"shell_self")
+
+    def _shell_read_lag(self, json):
+        u"Reads parsed json from _shell_lag."
+        json  = JsonParser.parse(json)
+        text  = u"Current latency in seconds:"
+        value = json["data"]["lag_secs"]
+        print self.colorText("{0} {1}".format(text,value), "shell_self")
 
     def _shell_login(self, opts, args):
         u"Load and decrypt/decode secret from config.\n"\
@@ -3054,7 +3027,7 @@ class ShellHandler(ActionHandler):
             k,v = args[0].split("=")
             if k == "daemon":
                 try:
-                    daemon = {"true":True, "false":False}[v]
+                    daemon = {"true":True, "false":False}[v.lower()]
                 except KeyError:
                     raise InputError("Invalid value: %s" % value,
                                      kind = "value", arg = value)
@@ -3099,7 +3072,7 @@ class ShellHandler(ActionHandler):
             else:
                 raise CredentialError("No credentials saved in client.")
 
-    def _shell_read_orders(self, json, old = False, all = False):
+    def _shell_read_orders(self, json, all = False):
         u"Read and print parsed json from order-action, containing your open," \
         u" invalid or pending orders."
         json     = JsonParser.parse(json)
@@ -3121,24 +3094,19 @@ class ShellHandler(ActionHandler):
             sep   = sep
             )
         print dLine
-        if old:
-            orders = json[u"orders"]
-        else:
-            orders = json[u"return"]
+        orders = json[u"data"]
         for order in orders:
             if all or order[u"currency"] == currency:
-                if old:
-                    old = self.__read_old_order(order)
-                    cry,kind,amount,price,date,status = old
-                else:
-                    cry      = "   "
-                    amount   = Decimal( order[u"amount"]["value"] )
-                    price    = Decimal( order[u"price"]["value"]  )
-                    kind     = order[u"type"]
-                    kColor   = "order_%s" % kind.lower() 
-                    status   = order[u"status"]
-                    date     = datetime.fromtimestamp( int(order[u"date"]) )
-                    date     = date.strftime("%Y-%m-%d %H:%M:%S")
+                # Get values
+                cry      = "   "
+                amount   = Decimal( order[u"amount"]["value"] )
+                price    = Decimal( order[u"price"]["value"]  )
+                kind     = order[u"type"]
+                kColor   = "order_%s" % kind.lower() 
+                status   = order[u"status"]
+                date     = datetime.fromtimestamp( int(order[u"date"]) )
+                date     = date.strftime("%Y-%m-%d %H:%M:%S")
+                # Format values
                 amount = format( amount, ".8f" ).rjust(15)[:15]
                 price  = format( price , pForm ).rjust(15)[:15]
                 kind   = self.colorText(kind,         "order_%s" % kind)
@@ -3147,6 +3115,7 @@ class ShellHandler(ActionHandler):
                 price  = self.colorText(price,        "order_price")
                 date   = self.colorText(date,         "order_time")
                 status = self.colorText(" (" + status + ")",    "shell_self")
+                # Print values
                 print "  {kind} {sep} {amount} {sep} {oid}".format(
                     kind   = kind,
                     amount = amount,
@@ -3186,7 +3155,7 @@ class ShellHandler(ActionHandler):
             raise InputError("Expected 1 argument, got %s" % len(args))
         json  = self.api.info()
         json  = JsonParser.parse(json)
-        fee   = Decimal(json["return"][u"Trade_Fee"])/100
+        fee   = Decimal(json["data"][u"Trade_Fee"])/100
         cPrec = (Decimal(1) / 10) ** self.xml.currencies[opts.currency]["decimals"]
         price = Decimal(args[0])
         if price < 0:
@@ -3202,13 +3171,13 @@ class ShellHandler(ActionHandler):
     def _shell_read_status(self, json):
         u"Reads parsed json returned from status-action."
         json   = JsonParser.parse(json)
-        trades = json["return"]["trades"]
+        trades = json["data"]["trades"]
         if trades:
             sep   = self.colorText("|", "separators")
             line  = self.colorText(("-"*61).center(63),"separators")
             dLine = self.colorText(("="*61).center(63),"separators")
-            oid   = json["return"]["order_id"]
-            total = json["return"]["total_amount"]["display_short"]
+            oid   = json["data"]["order_id"]
+            total = json["data"]["total_amount"]["display_short"]
             total = u" Total amount: {0} ({1})".format(total, oid)
             print self.colorText(total,"shell_self")
             print dLine
@@ -3240,7 +3209,7 @@ class ShellHandler(ActionHandler):
     def _shell_read_ticker(self, json):
         u"Reads and display ticker."
         json   = JsonParser.parse(json)
-        ticker = json["return"]
+        ticker = json["data"]
         pForm  = ".%sf" % self.xml.currencies[self.opts.currency]["decimals"]
         high   = Decimal( ticker[u"high"]["value"] )
         high   = format(high, pForm).rjust(10)
@@ -3314,9 +3283,9 @@ class ShellHandler(ActionHandler):
         u"Get difference in local- and server-time"
         if not self.__time_diff:
             oid  = self.api.add_order("bid",10000000,10000,"USD")
-            oid  = JsonParser.parse(oid)["return"]
+            oid  = JsonParser.parse(oid)["data"]
             diff = self.api.orders()
-            diff = JsonParser.parse(diff)["return"][-1][u"priority"]
+            diff = JsonParser.parse(diff)["data"][-1][u"priority"]
             self.api.cancel("bid",oid)
             self.__time_diff = int(time.time()*1E6) - int(diff)
         return self.__time_diff
@@ -3338,7 +3307,7 @@ class ShellHandler(ActionHandler):
             )
         print self.colorText(header, "shell_self")
         print line
-        trades = json["return"]
+        trades = json["data"]
         try:
             pPrice = Decimal(trades[0][u"price"])
         except IndexError:
@@ -3624,7 +3593,7 @@ class CmdHandler(ActionHandler):
                 (u"sell",u"<amount> [price]",u"Sell BTC at [price]",True),
                 (u"ticker",u"",u"Get current ticker",False),
                 (u"trades",u"[since=0]",u"Get trade(s)",False),
-                (u"withdraw",u"<amount> [btc=15B...",u"Withdraw funds",True)
+                (u"withdraw",u"<amount> <address...",u"Withdraw funds",True)
                 ): print "{:<12}".format(action) + "{:<22}".format(args) + \
                          "{:<31}".format(descr) + {True:"[*]",False:"[ ]"}[auth]
 
