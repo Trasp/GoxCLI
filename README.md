@@ -64,7 +64,7 @@ NOTE: If you're activating your application more than once, you will end up with
 
 ### Daemon ###
 
-If you're using encrypted method of saving your key, please note that to run actions that requires authentication with Mt.Gox. you will have to start a service with the -s/--service option from command-line (and then follow instructions on scrren). If you prefer starting the service from within a GoxShell you could run this command:
+If you're using encrypted method of saving your key, please note that to run actions that requires authentication with Mt.Gox directly from commandline you will have to start a service with the -s/--service option from command-line (and then follow instructions on screen). If you prefer starting the service from within a GoxShell you could run this command:
 
 $ login daemon=True
 
