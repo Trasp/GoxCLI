@@ -1797,19 +1797,6 @@ class ActionHandler(object):
         amount, price = str(amount), str(price)
         return self.api.add_order(kind, amount, price, currency)
     
-    """
-    def _action_cancel(self, opts, args):
-        u"cancel <type> <oid>\n" \
-        u"<type> Order type, could be either ask or bid.\n" \
-        u"<oid> OrderID of the order."
-        if len(args) != 2:
-            raise InputError("Expected 2 arguments, got %s" % len(args))
-        else:
-            if args[0] not in ("bid","ask"):
-                raise InputError("Invalid argument: %s" % args[0], arg=args[0])
-            else:
-                return self.api.cancel(args[0],args[1])
-    """
     def _action_cancel(self, opts, args):
         u"cancel <oid>\n" \
         u"<oid> OrderID of the order."
