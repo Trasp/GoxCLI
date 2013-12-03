@@ -743,14 +743,14 @@ class MtGoxAPI(object):
     def _request(self, path, api=2, params={}, currency=None, crypto="BTC", auth=True):
         if api > 1:
             # API v2 require paths like money/info or BTCUSD/money/order/add
-            path = "".join(("money/", path))
+            path = "money/" + path
         if api > 0:
             if currency:
                 # Some functions in API v1 and later require currency-pairs like BTCUSD
-                path = "".join((crypto,currency,"/",path))
+                path = crypto + currency + "/" + path
             elif api == 1:
                 # Other functions in v1 is preceded by the "generic" domain
-                path = "".join(("generic/", path))
+                path = "generic/" + path
         if auth:
             # Instanciate a request using POST including sign for authentication
             url, req, data = self.__request_format_auth(path, params, api)
@@ -779,7 +779,7 @@ class MtGoxAPI(object):
                 u"key": actkey,
                 u"app": appkey
                 }
-        return self._request(rel_path, params=params, auth=False)
+        return self._request(rel_path, params=params, api=1, auth=False)
 
     def add_order(self, kind, amount, price, currency):
         rel_path = "order/add"
@@ -1625,7 +1625,7 @@ class ActionHandler(object):
         json = self.api.activate(args[0], dName)
         # Parse data
         json = JsonParser.parse(json)
-        data = json["data"]
+        data = json["return"]
         key  = data[u"Rest-Key"].decode('string_escape')
         self._secret = data[u"Secret"].decode('string_escape')
         if pw:
