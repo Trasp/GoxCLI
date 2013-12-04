@@ -92,3 +92,5 @@ I, Trasp, would also like to thanks Mt.Gox for contributing to this application.
 Also, like all other suckers out there I would also warmly welcome tiny donations, being a broke student and all :). If you think I deserved it, here's my address: 1NMmr9upNA37t91UkVagK2X5m55jvLMTWb
 
 You can also find me in #1024 at FreeNode if you want to contact me.
+
+### NOTE: This project is more or less dead. I will still fix the issues being raised, eventually... probably. I do not however expect any major changes to be made to the code, even though it's really needed here and there. I'm working on something else and will definitely be back in one way or another. For the Python-devs coming here to only/mostly read the code to understand MtGox' API there is some code in the testing branch. It's allready is about a year old and don't have API v2 support as the master branch has, and I don't remember how well the client actually work, but you might find it to suit your needs better since it should be easier to navigate in that code. ###

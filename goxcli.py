@@ -674,7 +674,7 @@ class MtGoxAPI(object):
     def __init__(self, credentials):
         u"Handles requests made to Mt.Gox."
         self._credentials = credentials
-        self._url = "https://mtgox.com/api/"
+        self._url = "https://mtgox.com/api"
         
     @property
     def credentials(self):
@@ -698,11 +698,12 @@ class MtGoxAPI(object):
     
     def __request_format_auth(self, path, params, api):
         """ Format a POST-request according to the rules set by Mt.Gox. """
+        if not params: params = {}
         # Format URL
-        url = "".join((self._url, str(api), "/", path))
+        url = "/".join((self._url, str(api), path))
         # Function requires authentication
         key, secret, counter = self.credentials
-        # Timestamp*1000+counter to make no more than 1000 requests per second possible
+        # Nonce must be an ever increasing number, we use time for that.
         params["nonce"] = int(time.time()*1000)+counter
         # Format the POST-data
         data = urllib.urlencode(params)
@@ -731,16 +732,16 @@ class MtGoxAPI(object):
                     "Rest-Sign":sign
                     }
             req = urllib2.Request(url, data, headers)
-        return url, req, data
-    
+        return req, data
+        
     def __request_format_public(self, path, params, api):
         """ Format a simple GET-request instead of POST. """
-        url  = "".join((self._url, str(api), "/", path))
-        data = urllib.urlencode(params) if len(params) > 0 else None
-        req  = urllib2.Request(url, data)
-        return url, req, data
-        
-    def _request(self, path, api=2, params={}, currency=None, crypto="BTC", auth=True):
+        data = "?" + urllib.urlencode(params) if params else ""
+        url  = "{0}/{1}/{2}{3}".format(self._url, api, path, data)
+        req  = urllib2.Request(url)
+        return req, None
+    
+    def _request(self, path, api=2, params=None, currency=None, crypto="BTC", auth=True):
         if api > 1:
             # API v2 require paths like money/info or BTCUSD/money/order/add
             path = "money/" + path
@@ -753,10 +754,10 @@ class MtGoxAPI(object):
                 path = "generic/" + path
         if auth:
             # Instanciate a request using POST including sign for authentication
-            url, req, data = self.__request_format_auth(path, params, api)
+            req, data = self.__request_format_auth(path, params, api)
         else:
             # Instanciate a request using GET
-            url, req, data = self.__request_format_public(path, params, api)
+            req, data = self.__request_format_public(path, params, api)
         timeout = 15
         try:
             with closing(urllib2.urlopen(req, data, timeout)) as response:
@@ -781,13 +782,15 @@ class MtGoxAPI(object):
                 }
         return self._request(rel_path, params=params, api=1, auth=False)
 
-    def add_order(self, kind, amount, price, currency):
+    def add_order(self, kind, amount, currency, price=None):
+        if int(amount) < 1000000:
+            raise MtGoxError("Amount must be at least 0.01.")
         rel_path = "order/add"
         params = {
-                "amount_int":str(amount),
-                "price_int":str(price),
+                "amount_int":int(amount),
                 "type":kind
                 }
+        if price: params["price_int"] = int(price)
         return self._request(rel_path, params=params, currency=currency, auth=True)
 
     def block(self,hash=None,depth=None):
@@ -802,7 +805,7 @@ class MtGoxAPI(object):
             params = dict()
         return self._request(rel_path, params=params, auth=False)
 
-    def btcaddress(self,hash):
+    def btcaddress(self, hash):
         u"Requests information about a specific BTC-address."
         rel_path = "bitcoin/addr_details"
         params = {"hash":hash}
@@ -819,7 +822,7 @@ class MtGoxAPI(object):
         rel_path = "bitcoin/address"
         return self._request(rel_path, auth=True)
         
-    def depth(self, currency=None,full=False):
+    def depth(self, currency=None, full=False):
         u"Request current depth-table at Mt.Gox (aka order book)."
         if full:
             rel_path = "depth/full"
@@ -855,8 +858,8 @@ class MtGoxAPI(object):
         u"Returns trades that have matched the order specified, result will" \
         u" be empty if order still is intact."
         rel_path = "order/result"
-        params = dict(type = type, order = oid)
-        return self._request(rel_path, params=params, auth=True)
+        params = {"type":type,"order":oid}
+        return self._request(rel_path, params=params, api=1, auth=True)
 
     def ticker(self,currency="USD"):
         u"Request latest ticker from Mt.Gox."
@@ -1711,14 +1714,11 @@ class ActionHandler(object):
     def _action_buy(self, opts, args):
         u"Post bid-order at Mt.Gox, buying bitcoins.\n" \
         u"buy <amount> [price]\n" \
-        u"<amount> Amount of BTC to buy. Prefix or suffix with currency" \
+        u"<amount> Amount of BTC to buy. Prefix or suffix with currency"   \
                 u" symbol to specify amount in currency instead of BTC.\n" \
-        u"[price] Specify at what price you want to request your order.\n" \
-        u"NOTE: If you don't enter a price, GoxCLI will fetch the OrderBook," \
-             u" trying to put up a properly sized ask, I haven't even checked" \
-             u" if these orders are exact under normal circumstances, as" \
-             u" everything else in this application YOU USE THIS AT YOUR OWN " \
-             u" RISK "
+        u"[price] Specify at what price you want to request your order."   \
+                u" If you choose not to specify a price a market order will be" \
+                u" initiated instead. "
         return self._addorder(opts, args, "bid")
 
     def _action_sell(self, opts, args):
@@ -1726,7 +1726,9 @@ class ActionHandler(object):
         u"sell <amount> <price>\n" \
         u"<amount> Amount of BTC to sell. Prefix or suffix with currency" \
                 u" symbol to specify amount in currency instead of BTC.\n" \
-        u"<price> Specify at what price you want to request your order."
+        u"[price] Specify at what price you want to request your order."   \
+                u" If you choose not to specify a price a market order will be" \
+                u" initiated instead. "
         return self._addorder(opts, args, "ask")
 
     def _addorder(self, opts, args, kind):
@@ -1760,30 +1762,28 @@ class ActionHandler(object):
             price = price / cPrec
         else:
             # Generate order with a certain amount or value
-            side   = "bids" if kind == "ask" else "asks"
-            json   = self.api.depth(currency)
-            depth  = DepthParser(decimals)
-            depth.side   = side
             if opts.asbtc:
                 # Convert amount to to int
                 amount = amount / bPrec
-                # Get price
-                depth.steps  = 1
-                depth.amount = amount
-                json         = depth.process(json, raw = False)
-                price        = int(json["data"][side][0]["price_int"])
             else:
-                # Amount given in currency-value.
-                depth.value = amount
-                depth.iv    = True
+                # Amount given in fiat.
+                side   = "bids" if kind == "ask" else "asks"
+                json   = self.api.depth(currency)
+                # Setup depthparser to get all orders needed.
+                depth  = DepthParser(decimals)
+                depth.side   = side
+                depth.value  = amount
+                depth.iv     = True
                 # Convert value to to int
-                total = amount / cPrec
-                total = total  / bPrec
-                # Get price and amount
+                total = amount / cPrec / bPrec
+                # Get price and amount from order book (depth)
                 orders  = depth.process(json, raw = False)["data"][side]
                 current = 0
                 amount  = 0
                 order   = orders.pop(0)
+                # Count the amount of all orders up to the last one which is
+                # where the sum of all orders total fiat value exceeds the
+                # amount of fiat specified.
                 while orders:
                     # Count amount of all orders up to the last one.
                     current += int( order["value_int"] )
@@ -1792,10 +1792,9 @@ class ActionHandler(object):
                 else:
                     # Take price and the rest of the amount that's needed.
                     rest   = total - current
-                    price  = int( order["price_int"] )
-                    amount = current + ( rest / price )
-        amount, price = str(amount), str(price)
-        return self.api.add_order(kind, amount, price, currency)
+                    _price = int( order["price_int"] )
+                    amount = current + ( rest / _price )
+        return self.api.add_order(kind, int(amount), currency, price=price)
     
     def _action_cancel(self, opts, args):
         u"cancel <oid>\n" \
@@ -2268,14 +2267,6 @@ class ShellHandler(ActionHandler):
                     currency = self.opts.currency
                     )
                 line = raw_input(out)
-                # TODO:
-                # Ansi escape-codes mess up raw_input, should find a way around it.
-                #sign = u" > " if self.dName else u"> "
-                #line = raw_input("\n{currency}{dName}{sign}".format(
-                #    currency = self.colorText(currency, "shell_currency"),
-                #    dName = self.colorText(self.dName or u'', "shell_user"),
-                #    sign = self.colorText(sign, "shell_self")
-                #    )) # [CRY] devname $
                 print ""
             except EOFError, e:
                 print self.colorText(u"exit","shell_self")
@@ -3269,7 +3260,7 @@ class ShellHandler(ActionHandler):
     def _time_diff(self):
         u"Get difference in local- and server-time"
         if not self.__time_diff:
-            oid  = self.api.add_order("bid",10000000,10000,"USD")
+            oid  = self.api.add_order("bid",10000000,"USD",price=10000)
             oid  = JsonParser.parse(oid)["data"]
             diff = self.api.orders()
             diff = JsonParser.parse(diff)["data"][-1][u"priority"]
